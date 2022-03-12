@@ -1,0 +1,686 @@
+#!/bin/bash
+# Validate args
+
+CONF_FILE=""
+GENERATION_DATE=$(date)
+TS=$(date +%Y%m%d_%H%M%S)
+DIFF_ID=${TS}
+HOME_DIR=`dirname ${0}`
+echo $HOME_DIR
+
+LOG_PARENT_DIR=${HOME_DIR}/logs
+LOG_DIR=${LOG_PARENT_DIR}/${DIFF_ID}
+LOG_HTTP_LINK=http://$(hostname -fs)/${DIFF_ID}
+
+LATEST_BUILD=""
+COMM_MODE=""
+COMM_LOC=""
+ARTIFACTORY_LOCATION=""
+PRIMARY_ARTIFACTORY_LOCATION=""
+SECONDARY_ARTIFACTORY_LOCATION=""
+
+validateArgs(){
+  if [[ -z ${CONF_FILE} ]]; then
+    echo "config file not provided"
+    exit
+  fi
+
+  if [[ ! -r ${CONF_FILE} ]]; then
+    echo "Unable to read config file : ${CONF_FILE}"
+  fi
+}
+
+validateConfigJson(){
+  cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['artifactory'];" > /dev/null 2>&1
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo "Invalid config file. \"artifactory\" is missing"
+    exit -1
+  fi
+
+  PRIMARY_ARTIFACTORY_LOCATION=`cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['artifactory']['primary'];"`
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo "Invalid config file. \"primary\" in \"artifactory\" is missing"
+    exit -1
+  fi
+  
+  if [[ ${#PRIMARY_ARTIFACTORY_LOCATION} = 0 ]]; then
+    echo "Invalid config file. \"primary\" in \"artifactory\" cannot be empty."
+    exit -1
+  else
+    ARTIFACTORY_LOCATION=${PRIMARY_ARTIFACTORY_LOCATION}
+  fi
+
+  SECONDARY_ARTIFACTORY_LOCATION=$(cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['artifactory']['secondary'];")
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo -e "Invalid config file. \"secondary\" in \"artifactory\" is missing. \n If nothing to mention, provide an empty string."
+    exit -1
+  fi
+
+
+  cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['tcConfig'];" > /dev/null 2>&1
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo "Invalid config file. \"tcConfig\" is missing"
+    exit -1
+  fi
+
+  cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['tcConfig']['username'];" > /dev/null 2>&1
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo "Invalid config file. \"username\" in \"tcConfig\" is missing"
+    exit -1
+  fi
+
+  cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['tcConfig']['password'];" > /dev/null 2>&1
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo "Invalid config file. \"password\" in \"tcConfig\" is missing"
+    exit -1
+  fi
+
+  cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['tcConfig']['uri'];" > /dev/null 2>&1
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo "Invalid config file. \"uri\" in \"tcConfig\" is missing"
+    exit -1
+  fi
+
+  cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['build'];" > /dev/null 2>&1
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo "Invalid config file. \"build\" section is missing"
+    exit -1
+  fi
+
+  cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['build']['projectId'];" > /dev/null 2>&1
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo "Invalid config file. \"projectId\" in \"build\" is missing"
+    exit -1
+  fi
+
+  cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['build']['branch'];" > /dev/null 2>&1
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo "Invalid config file. \"branch\" in \"build\" is missing"
+    exit -1
+  fi
+
+  cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['diff'];" > /dev/null 2>&1
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo "Invalid config file. \"diff\" is missing"
+    exit -1
+  fi
+
+  cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['diff']['latestBuild'];" > /dev/null 2>&1
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo "Invalid config file. \"latestBuild\" in \"diff\" section is missing"
+    exit -1
+  fi
+
+  cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['diff']['previousBuild'];" > /dev/null 2>&1
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo "Invalid config file. \"previousBuild\" in \"diff\" is missing"
+    exit -1
+  fi
+
+  cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['diff']['lastUpdated'];" > /dev/null 2>&1
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo "Invalid config file. \"lastUpdated\" in \"diff\" is missing"
+    exit -1
+  fi
+
+  cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['config'];" > /dev/null 2>&1
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo "Invalid config file. \"config\" is missing"
+    exit -1
+  fi
+
+  cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['config']['updateConfigFile'];" > /dev/null 2>&1
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo "Invalid config file. \"updateConfigFile\" in \"config\" section is missing"
+    exit -1
+  fi
+
+  cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['config']['commMode'];" > /dev/null 2>&1
+  EXIT_CODE=$?
+  if [[ "${EXIT_CODE}" -ne 0 ]]; then
+    echo "Invalid config file. \"commMode\" in \"config\" is missing"
+    exit -1
+  else
+    COMM_MODE=$(cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['config']['commMode'];")
+  fi
+
+  case "${COMM_MODE}" in
+  email)
+    cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['config']['email'];" > /dev/null 2>&1
+    EXIT_CODE=$?
+    if [[ "${EXIT_CODE}" -ne 0 ]]; then
+      echo "Invalid config file. \"email\" in \"config\" is missing"
+      exit -1
+    else
+      COMM_LOC=$(cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print ','.join([result for result in jsonObj['config']['email']]);")
+    fi
+  ;;
+  copy)
+    cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['config']['copyLocation'];" > /dev/null 2>&1
+    EXIT_CODE=$?
+    if [[ "${EXIT_CODE}" -ne 0 ]]; then
+      echo "Invalid config file. \"copyLocation\" in \"config\" is missing"
+      exit -1
+    else
+      COMM_LOC=$(cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print ' '.join([result for result in jsonObj['config']['email']]);")
+    fi
+  ;;
+  *) 
+    echo "Invalid communication mode"
+    exit -1
+  esac
+}
+
+getBuildNumber(){
+
+  mkdir -p ${LOG_DIR}
+  
+  USE_CUSTOM_TARGET_BUILD=$(cat ${CONF_FILE} | python -c "import sys,json; jsonObj=json.load(sys.stdin);print jsonObj['diff']['config']['target']['useCustom'].upper();" 2>/dev/null)
+  EXIT_CODE=$?
+  if [[ ${EXIT_CODE} -ne 0 ]]; then
+    echo "\"useCustom\" attribute not found for target build. Either you are using obselete config file or and invalid one. Using \"FALSE\""
+    USE_CUSTOM_TARGET_BUILD="FALSE"
+  else
+    case "${USE_CUSTOM_TARGET_BUILD}" in
+      TRUE)
+        CUSTOM_TARGET_BUILD=$(cat ${CONF_FILE} | python -c "import sys,json; jsonObj=json.load(sys.stdin);print jsonObj['diff']['config']['target']['customBuild'].upper();" 2>/dev/null)
+        EXIT_CODE=$?
+        if [[ ${EXIT_CODE} -ne 0 ]]; then
+          echo "\"customBuild\" attribute not found. Either you are using obselete config file or and invalid one. "
+          echo "Ignoring \"useCustom\" attribute for target build"
+          USE_CUSTOM_TARGET_BUILD="FALSE"
+        else
+          if [[ "${CUSTOM_TARGET_BUILD}" == "" ]]; then
+            echo "No value provided for custom target build"
+            echo "Skipping using custom target build."
+            USE_CUSTOM_TARGET_BUILD="FALSE"
+          else
+            echo "Using custom target build : ${CUSTOM_TARGET_BUILD}"
+          fi
+        fi
+      ;;
+      FALSE)
+        echo ""
+      ;;
+      *)
+        echo "Invalid value \"${USE_CUSTOM_TARGET_BUILD}\" provided."
+        echo "Exiting"
+        exit -1
+    esac
+  fi
+ 
+ if [[ ${USE_CUSTOM_TARGET_BUILD} == "FALSE" ]]; then 
+    echo "Fetching latest build number from artifactory"
+
+    TC_URI=$(cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['tcConfig']['uri'];")
+    USERNAME=$(cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['tcConfig']['username'];")
+    PASSWORD=$(cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['tcConfig']['password'];")
+    AUTH_TYPE=$(cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['tcConfig']['authType'];")
+
+    PROJECT_ID=$(cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['build']['projectId'];")
+    BRANCH=$(cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['build']['branch'];")
+    BRANCH_NORM=$(echo $BRANCH | sed 's/\.//g')
+
+      AUTH_HEADER="-u \\""${USERNAME}:${PASSWORD}\\"""
+
+    #LATEST_GREEN_BUILD_ID=$(curl -s --request GET ${AUTH_HEADER} --url "${TC_URI}/app/rest/builds?locator=affectedProject%3A(id%3A${PROJECT_ID})%2Cbranch%3A${BRANCH}%2CbuildType%3A${PROJECT_ID}_IdcsPipeline%2Cstatus%3ASUCCESS%2Cstate%3Afinished%2Ccount%3A1" --header 'accept: application/json' | python -c "import sys,json;jsonObj=json.load(sys.stdin);print [str(result['number']) for result in jsonObj['build']][0]" 2>/dev/null)
+    if [[ "${AUTH_TYPE}" == "Bearer" ]];
+    then
+      LATEST_GREEN_BUILD_ID=$(curl -s --request GET --url "${TC_URI}/app/rest/ui/builds?locator=defaultFilter:false,branch:(policy:ALL_BRANCHES,name:(matchType:equals,value:(${BRANCH}))),state:(finished:true),buildType:(id:${PROJECT_ID}),and:(status:SUCCESS),count:1&fields=count,build(id,number)" --header 'accept: application/json' --header "Authorization: Bearer "${PASSWORD}""| python -c "import sys,json;jsonObj=json.load(sys.stdin);print [str(result['number']) for result in jsonObj['build']][0]" 2>/dev/null)
+    elif [[ "${AUTH_TYPE}" == "Basic" ]];
+    then
+      LATEST_GREEN_BUILD_ID=$(curl -s --request GET -u "${USERNAME}:${PASSWORD}"  --url "${TC_URI}/app/rest/ui/builds?locator=defaultFilter:false,branch:(policy:ALL_BRANCHES,name:(matchType:equals,value:(${BRANCH})),state:(finished:true),buildType:(id:{PROJECT_ID}),and:(status:SUCCESS),count:1&fields=count,build(id,number)" --header 'accept: application/json' | python -c "import sys,json;jsonObj=json.load(sys.stdin);print [str(result['number']) for result in jsonObj['build']][0]" 2>/dev/null)  
+    else
+      echo "Unsupported AuthenticationType: [${AUTH_TYPE}]. Supported are [Basic, Bearer]"
+      exit -1
+    fi
+    #LATEST_GREEN_BUILD_ID=$(curl -s --request GET -u ${USERNAME}:${PASSWORD} --url "${TC_URI}/app/rest/builds?locator=buildType%3A%28id%3Aidcs_Idcs${BRANCH_NORM}_DeployServices%29%2Cbranch%3Adefault%3Atrue%2Ccount%3A1%2Cstatus%3ASUCCESS" --header 'accept: application/json' | python -c "import sys,json;jsonObj=json.load(sys.stdin);print [str(result['id']) for result in jsonObj['build']][0]" 2>/dev/null)
+    ERROR_CODE=$?
+    if [[ ${ERROR_CODE} -ne 0 ]]; then
+      echo "Unable to fetch latest build green ID for branch ${BRANCH}"
+      echo "Exiting..."
+      exit -1
+    fi
+
+    #local BUILD_NUMBER_ID=`curl -s --request GET -u ${USERNAME}:${PASSWORD} --url "${TC_URI}/app/rest/builds?locator=snapshotDependency:(to:(id:${LATEST_GREEN_BUILD_ID}),includeInitial:true),defaultFilter:false" --header 'accept: application/json' | python -c "import sys,json;jsonObj=json.load(sys.stdin);buildNumberID=jsonObj['count'];print [str(result['id']) for result in jsonObj['build']][buildNumberID-1]"`
+ 
+    #LATEST_BUILD=`curl -s --request GET -u ${USERNAME}:${PASSWORD} --url "${TC_URI}/app/rest/builds/id:${BUILD_NUMBER_ID}" --header 'accept: application/json' | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['number']"`
+    
+    LATEST_BUILD=${LATEST_GREEN_BUILD_ID}
+  
+    echo "Latest GREEN label for ${BRANCH} is ${LATEST_BUILD} "
+  else
+    LATEST_BUILD=${CUSTOM_TARGET_BUILD}
+    echo "Using custom build: ${LATEST_BUILD}"  
+  fi
+}
+
+compareBuilds(){
+  if [[ ${LATEST_BUILD} == ${PREVIOUS_BUILD} ]]; then
+    echo "Resent and last build are same i.e. ${LATEST_BUILD}"
+    echo "No new build since ${LAST_MODIFIED_DATE}"
+    exit 0
+  fi
+
+  for FOLDER in "${FOLDERS[@]}"
+  do
+    for CONTEXT in "${CONTEXTS[@]}"
+    do
+      ${HOME_DIR}/searchJars.sh -v "${PREVIOUS_BUILD}" -s "${CONTEXT}" -fp .json -f "${FOLDER}" -al "${ARTIFACTORY_LOCATION}" && ${HOME_DIR}/searchJars.sh -v "${LATEST_BUILD}" -s "${CONTEXT}" -fp .json -f "${FOLDER}" -al "${ARTIFACTORY_LOCATION}" && ${HOME_DIR}/findDiffFiles.sh -sv "${PREVIOUS_BUILD}" -tv "${LATEST_BUILD}" -s "${CONTEXT}" -fp *json -f "${FOLDER}" > ${LOG_DIR}/"${CONTEXT}"_"${FOLDER}"_"${PREVIOUS_BUILD}"_"${LATEST_BUILD}"_"${TS}".out && ${HOME_DIR}/findDiffFiles.sh -tv "${PREVIOUS_BUILD}" -sv "${LATEST_BUILD}" -s "${CONTEXT}" -fp *json -f "${FOLDER}" > ${LOG_DIR}/"${CONTEXT}"_"${FOLDER}"_"${LATEST_BUILD}"_"${PREVIOUS_BUILD}"_"${TS}".out 2>/dev/null
+    done
+  done
+}
+
+generateTableRow(){
+  COLOR=BLACK
+  case ${3} in
+  ADDED)
+    COLOR=GREEN
+  ;;
+  MODIFIED)
+    COLOR=BLUE
+  ;;
+  DELETED)
+    COLOR=RED
+  ;;
+  *)
+    COLOR=BLACK
+  ;;
+  esac
+
+  if [[ ! -z "${4}" ]];
+  then  
+    if [[ "${1}" = "resources" ]];
+    then
+      echo "<tr style=\"text-align: center\"> <td style=\"width:150;\">"${1}"</td> <td style=\"width:150;\">"${2}"</td> <td style=\"width:150;color:"${COLOR}"\">"${3}"</td> <td style=\"width:500;text-align:left;padding-left:0px\">"${4}"</td> </tr>" >> ${REPORT_FILE}
+    else
+      echo "<tr style=\"text-align: center\"> <td style=\"width:150;\">"${1}"</td> <td style=\"width:150;\">"${2}"</td> <td style=\"width:150;color:"${COLOR}"\">"${3}"</td> <td style=\"width:500;text-align:left;padding-left:10px\">"${4}"</td> </tr>" >> ${REPORT_FILE}
+    fi
+  fi
+}
+
+# Returns -1 if element not found
+findInArray(){
+  unset INDEX
+  INDEX=-1
+  FILES_ARRAY="${2}"
+  FILE_TO_SEARCH="${1}"
+  for a in ${FILES_ARRAY[@]}
+  do
+    if [[ "${a}" = "${FILE_TO_SEARCH}" ]]; then
+      INDEX=$(( ${INDEX} + 1 ))
+      break;
+    fi
+  done
+  echo "${INDEX}"
+}
+
+copyFilesAndGeneratePatch(){
+  local CONTEXT=${1}
+  local BASE_FILENAME=${2}
+  local JSON_DIFF_OUTPUT_FILE=${3}
+  local FOLDER=${4}
+
+  local PREVIOUS_BUILD_FILE=`cat "${JSON_DIFF_OUTPUT_FILE}" | grep SOURCE_FILE | grep "/${BASE_FILENAME}" |awk -F= '{print $2}'`
+  local LATEST_BUILD_FILE=`cat "${JSON_DIFF_OUTPUT_FILE}" | grep TARGET_FILE | grep "/${BASE_FILENAME}" | awk -F= '{print $2}'`
+
+  local PREVIOUS_BUILD_DIR="${LOG_DIR}"/"${PREVIOUS_BUILD}"/"${CONTEXT}"
+  local LATEST_BUILD_DIR="${LOG_DIR}"/"${LATEST_BUILD}"/"${CONTEXT}"
+  local PATCH_DIR="${LOG_DIR}"/patch/"${CONTEXT}"/"${FOLDER}"
+  local PATCH_FILE_NAME="${PATCH_DIR}"/"${BASE_FILENAME}"
+
+  mkdir -p "${PREVIOUS_BUILD_DIR}"
+  mkdir -p "${LATEST_BUILD_DIR}"
+  mkdir -p "${PATCH_DIR}"
+
+  [[ -f "${PREVIOUS_BUILD_FILE}" ]] && cp "${PREVIOUS_BUILD_FILE}" "${PREVIOUS_BUILD_DIR}"/
+  [[ -f "${LATEST_BUILD_FILE}" ]] && cp "${LATEST_BUILD_FILE}" "${LATEST_BUILD_DIR}"/
+
+  if [[ -f "${PREVIOUS_BUILD_FILE}" && -f "${LATEST_BUILD_FILE}" ]];
+  then
+    diff -c "${PREVIOUS_BUILD_DIR}"/"${BASE_FILENAME}" "${LATEST_BUILD_DIR}"/"${BASE_FILENAME}" > "${PATCH_FILE_NAME}"
+  else
+    if [[ -f "${PREVIOUS_BUILD_FILE}" ]];
+    then
+      cp "${PREVIOUS_BUILD_FILE}" > "${PATCH_FILE_NAME}"
+    else
+      cp "${LATEST_BUILD_FILE}" > "${PATCH_FILE_NAME}"
+    fi
+  fi
+  PATCH_FILE_NAME=$(echo ${PATCH_FILE_NAME} | awk -F${DIFF_ID}/ '{print $2}')
+  echo "${LOG_HTTP_LINK}/${PATCH_FILE_NAME}"
+
+}
+getResourceType(){
+  echo `cat "${1}" | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['meta']['resourceType'];"`
+}
+
+generateInnerTable(){
+   eval "declare -A arg_array=${1#*=}"
+   local INNER_HTML="<table style=\"border-collapse:collapse;\"><tbody> <tr><th>Resource-Type</th><th>Resource</th></tr>"
+   for key in ${!arg_array[@]}
+   do
+      INNER_HTML="${INNER_HTML} <tr><td style=\"text-align:center;padding-left:10px;padding-right:10px;\">${key}</td><td style=\"width:500;text-align:left;padding-left:10px;\">${arg_array[${key}]}</td></tr>"
+   done
+   INNER_HTML="${INNER_HTML} </tbody></table>"
+   echo "${INNER_HTML}"
+}
+
+doReportProcessing(){
+  local MODIFICATION_TYPE="${1}"
+  local CONTEXT="${2}"
+  local FOLDER="${3}"
+  unset -v JSON_FILE_NAMES
+  eval "declare -A JSON_FILE_NAMES=${4#*=}"
+  local SOURCE_JSON_FILE
+  local RESOURCE_TYPE
+  local JSON_FILES
+  
+  unset -v DICT
+  declare -A DICT
+
+  # If context is "admin", simply add jsons to added files, for other contexts, check whether JSON is already processed or not.
+  if [[ "${CONTEXT}" = "admin" ]]; then
+    ADMIN_FILES="${JSON_FILE_NAMES}"
+    for file in ${JSON_FILE_NAMES[@]}
+    do
+      # Fetch resource type for only resources
+      if [[ "${FOLDER}" = "resources" ]];
+      then
+        unset SOURCE_JSON_FILE
+        SOURCE_JSON_FILE=$(cat "${JSON_DIFF_OUTPUT_FILE}" | grep -A4 ${MODIFICATION_TYPE} | grep SOURCE_FILE |  grep -v tencent |  grep "/${file}" | awk -F= '{print $2}')
+        RESOURCE_TYPE=$(getResourceType "${SOURCE_JSON_FILE}")
+      else  
+        unset RESOURCE_TYPE
+      fi
+
+      local PATCH_FILE=$(copyFilesAndGeneratePatch "${CONTEXT}" "${file}" "${JSON_DIFF_OUTPUT_FILE}" "${FOLDER}")
+
+      #If RESOURCE_TYPE is not set, it means no need to group resource according to their resource-types
+      if [[ -z "${RESOURCE_TYPE}" ]];            
+      then
+        if [[ -z "${JSON_FILES}" ]];
+        then
+          JSON_FILES="<a href="${PATCH_FILE}">${file}</a>"
+        else
+          JSON_FILES="${JSON_FILES} <br> <a href="${PATCH_FILE}">${file}</a>"
+        fi
+      else
+        if [[ "${#DICT[${RESOURCE_TYPE}]}" -ne 0 ]];
+        then
+          DICT["${RESOURCE_TYPE}"]="${DICT["${RESOURCE_TYPE}"]} <br> <a href="${PATCH_FILE}">${file}"
+        else
+          DICT["${RESOURCE_TYPE}"]="<a href="${PATCH_FILE}">${file}"
+        fi
+      fi
+    done
+  else
+    for file in ${JSON_FILE_NAMES[@]}
+    do
+      local IF_FILE_ALREDY_LISTED=$(findInArray "${file}" "${ADMIN_FILES}")
+      if [[ "${IF_FILE_ALREDY_LISTED}}" = "-1" ]];
+      then
+        if [[ "${FOLDER}" = "resources" ]];
+        then
+          unset SOURCE_JSON_FILE
+          SOURCE_JSON_FILE=$(cat "${JSON_DIFF_OUTPUT_FILE}" | grep -A4 ${MODIFICATION_TYPE} | grep SOURCE_FILE |  grep -v tencent | grep "/${file}" | awk -F= '{print $2}')
+          RESOURCE_TYPE=$(getResourceType "${SOURCE_JSON_FILE}")
+        else  
+          unset RESOURCE_TYPE
+        fi
+
+        local PATCH_FILE=$(copyFilesAndGeneratePatch "${CONTEXT}" "${file}" "${JSON_DIFF_OUTPUT_FILE}" "${FOLDER}")
+
+        if [[ -z "${RESOURCE_TYPE}" ]];            
+        then
+          if [[ -z "${JSON_FILES}" ]];
+          then
+            JSON_FILES="<a href="${PATCH_FILE}">${file}</a>"
+          else
+            JSON_FILES="${JSON_FILES} <br> <a href="${PATCH_FILE}">${file}</a>"
+          fi
+        else
+          if [[ "${#DICT[${RESOURCE_TYPE}]}" -ne 0 ]];
+          then
+            DICT["${RESOURCE_TYPE}"]="${DICT["${RESOURCE_TYPE}"]} <br> <a href="${PATCH_FILE}">${file}"
+          else
+            DICT["${RESOURCE_TYPE}"]="<a href="${PATCH_FILE}">${file}"
+          fi
+        fi
+      fi       
+    done
+  fi
+
+  if [[ "${#DICT[@]}" -ne 0 ]];
+  then
+    JSON_FILES=$(generateInnerTable "$(declare -p DICT)")
+  fi
+
+  generateTableRow ${FOLDER} ${CONTEXT} ${MODIFICATION_TYPE} "${JSON_FILES}"
+}
+
+generateReport(){
+  REPORT_FILE=${LOG_DIR}/compareJsonReport_"${PREVIOUS_BUILD}"_"${LATEST_BUILD}".html
+
+  echo "<html><head> <style> table, th, td { border: 1px solid black; border-collapse: collapse; } </style> </head> <body> <center> <h1>List of IDCS SCIM JSON's added/modified/deleted in <u>${LATEST_BUILD}</u> w.r.t. <u>${PREVIOUS_BUILD}</u></h1> </center> <h2>Date: ${GENERATION_DATE}</h2> <h2>Machine: $(hostname --fqdn) </h2> <table style=\"width:70%\"> <tr style=\"font-weight: bold;text-align: center;background-color:#C9CACB\" > <td style=\"width:150;\">FOLDER</td> <td style=\"width:150;\">CONTEXT</td> <td style=\"width:150;\">CHANGE TYPE</td> <td style=\"width:600;padding:0px\">JSON</td> </tr>" > ${REPORT_FILE}
+
+  local RESOURCE_TYPE
+
+  for FOLDER in ${FOLDERS[@]}
+  do
+    unset -v ADMIN_FILES    
+    for CONTEXT in ${CONTEXTS[@]}
+    do
+      JSON_DIFF_OUTPUT_FILE="${LOG_DIR}"/"${CONTEXT}"_"${FOLDER}"_"${LATEST_BUILD}"_"${PREVIOUS_BUILD}"_"${DIFF_ID}".out
+      #MODIFICATION_TYPE="ADDED" 
+
+      ADDED_FILES=($(cat "${JSON_DIFF_OUTPUT_FILE}" | grep -A4 ADDED | grep JSON_FILE | grep -v tencent | awk -F= '{print $2}'))
+
+      if [[ "${#ADDED_FILES[@]}" -ne 0 ]];
+      then
+        $(doReportProcessing "ADDED" "${CONTEXT}" "${FOLDER}" "$(declare -p ADDED_FILES)")
+      fi
+
+      declare -a MODIFIED_FILES=($(cat "${JSON_DIFF_OUTPUT_FILE}" | grep -A4 MODIFIED | grep JSON_FILE | awk -F= '{print $2}'))
+      if [[ "${#MODIFIED_FILES[@]}" -ne 0 ]];
+      then
+        $(doReportProcessing "MODIFIED" "${CONTEXT}" "${FOLDER}" "$(declare -p MODIFIED_FILES)")
+      fi
+    done
+  done
+
+ 
+  echo "</table><br><br> <font style=\"font-weight:bold\">Legends</font><table style=\"width:200\"> <tr> <td style=\"background-color:GREEN;width:100;height:20\"></td> <td style=\"width:100;height:20;text-align:center\">ADDED</td> </tr>   <tr>  <td style=\"background-color:RED;width:100;height:20\"></td>  <td style=\"width:100;height:20;text-align:center\">DELETED</td>  </tr>  <td style=\"background-color:BLUE;width:100;height:20\"></td> <td style=\"width:100;height:20;text-align:center\">MODIFIED</td>  </tr>  </table> <p> <h3> Detailed logs are available at <a href="${LOG_HTTP_LINK}">"${LOG_HTTP_LINK}"</a></h3></body> </html>" >> ${REPORT_FILE}
+}
+
+updateConfigJSON(){
+  UPDATE_CONFIG_FILE=`cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['config']['updateConfigFile'];"`
+
+  shopt -s nocasematch
+
+  if [[ "${UPDATE_CONFIG_FILE}" == "true" ]]; then
+    sed -i s/"\"latestBuild\":[^\]*\"/\"latestBuild\":\"${LATEST_BUILD}\"/g" ${CONF_FILE}
+    sed -i s/"\"previousBuild\":[^\]*\"/\"previousBuild\":\"${PREVIOUS_BUILD}\"/g" ${CONF_FILE}
+    sed -i s/"\"lastUpdated\":[^\]*\"/\"lastUpdated\":\"${DIFF_ID}\"/g" ${CONF_FILE}
+  fi
+
+  shopt -u nocasematch
+
+  BACKUP_CONF_FILE_NAME=`basename ${CONF_FILE}`
+  cp ${CONF_FILE} ${LOG_DIR}/${BACKUP_CONF_FILE_NAME}
+
+}
+
+sendReport(){
+  case "${COMM_MODE}" in 
+    email)
+      echo "Sending report as an email to "${COMM_LOC}""
+      unset  SUBJECT_PREFIX
+      if [[ "${UPDATE_CONFIG_FILE}" == "true" ]];
+      then
+        SUBJECT_PREFIX="Incremental"
+      else
+        SUBJECT_PREFIX="Baseline"
+      fi
+      cat ${REPORT_FILE} | mutt -e "set content_type=text/html" -s "${SUBJECT_PREFIX} JSON comparison report ${PREVIOUS_BUILD} - ${LATEST_BUILD}" -- "${COMM_LOC}"
+    ;;
+    copy)
+      for dest in "${COMM_LOC}"
+      do
+        echo "Copying report to ${dest}"
+        cp ${REPORT_FILE} ${dest}
+        if [[ $? -ne 0 ]]; then
+          echo "Failed to copy report ["${REPORT_FILE}"] to "${dest}""
+        fi
+      done 
+    ;;
+  esac
+}
+
+cleanup(){
+  echo "Cleaning downloaded archives and their corresponding folders"
+  if [[ "${PREVIOUS_BUILD}" != "" ]]; then
+    TEMP_FILES=`ls ${HOME_DIR}/ | egrep "*${PREVIOUS_BUILD}*"`
+    for FILE in ${TEMP_FILES[@]}
+    do
+      echo "Deleting file/dir : ${FILE}"
+      rm -rf "${HOME_DIR}/${FILE}" 2>&1
+    done
+  else
+    echo "Skipping delete of source build archives."
+  fi
+
+  if [[ "${LATEST_BUILD}" != "" ]]; then  
+    TEMP_FILES=`ls ${HOME_DIR}/ | egrep "*${LATEST_BUILD}*"`
+    for FILE in ${TEMP_FILES[@]}
+    do
+      echo "Deleting file/dir : ${FILE}"
+      rm -rf "${HOME_DIR}/${FILE}" 2>&1
+    done
+  else
+    echo "Skipping delete of target build archives."
+  fi
+}
+
+checkForExistingExecution(){
+  LOCK_FILE=/tmp/diffJob.lck
+  CURRENT_PID=`echo ${BASHPID}`
+  if [[ -f "${LOCK_FILE}" ]];
+  then
+    PID_FROM_FILE=`cat ${LOCK_FILE}`
+    IS_RUNNING=`ps aux | grep -v grep | grep ${0} | grep -c ${PID_FROM_FILE}`
+    if [[ "${IS_RUNNING}" != "0" ]];
+    then
+      echo "Another process with PID [${PID_FROM_FILE}] is already running.."
+      exit 1
+    fi
+  fi
+  echo "${CURRENT_PID}" > "${LOCK_FILE}"
+}
+
+fetchSourceBuildNumber(){
+  local USE_CUSTOM_SOURCE_BUILD
+  PREVIOUS_BUILD=$(cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['diff']['latestBuild'];" 2>/dev/null)
+
+  USE_CUSTOM_SOURCE_BUILD=$(cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['diff']['config']['source']['useCustom'].upper();" 2>/dev/null)
+  EXIT_CODE=$?
+  
+  if [[ ${EXIT_CODE} -ne 0 ]]; then
+    echo ""
+  else
+    case "${USE_CUSTOM_SOURCE_BUILD}" in
+      TRUE)
+        echo "Using custom source build"
+        local CUSTOM_SOURCE_BUILD=$(cat "${CONF_FILE}" | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['diff']['config']['source']['customBuild'].upper();" 2>/dev/null)
+        EXIT_CODE=$?
+        if [[ ${EXIT_CODE} -ne 0 ]]; then
+          echo "Attrubute \"cutomBuild\" not found for \"source\" build config. Either config file is invalid or obselete."
+          echo "Skipping customBuild. Using ${PREVIOUS_BUILD}"
+        else
+          if [[ "${CUSTOM_SOURCE_BUILD}" == "" ]]; then
+            echo "No build number provided for custom source build."
+            echo "Skipping using custom source build"
+            echo "Using ${PREVIOUS_BUILD} as source build"
+          else
+            echo  "Using custom build ${CUSTOM_SOURCE_BUILD}"
+            PREVIOUS_BUILD="${CUSTOM_SOURCE_BUILD}"
+          fi
+        fi
+      ;;
+      FALSE)
+        echo "Using build ${PREVIOUS_BUILD} as source build"
+      ;;
+      *)
+        echo "Invalid option \"${USE_CUSTOM_SOURCE_BUILD}\""
+        echo "Exiting"
+        exit -1
+    esac
+  fi
+}
+
+# Check for existance of source archive in repository, if does not exist send an email and exit.
+checkForSourceArchive() {
+  local TEST_FILE_LOC="${ARTIFACTORY_LOCATION}/oracle/idaas/admin-srv-all/${PREVIOUS_BUILD}/admin-srv-all-${PREVIOUS_BUILD}.zip"
+  curl --output /dev/null --silent --head --fail "${TEST_FILE_LOC}"
+  local EXIT_STATUS=$? 
+
+  if [[ ${EXIT_STATUS} -ne 0 ]]; then
+    if [[ ${#SECONDARY_ARTIFACTORY_LOCATION} = 0 ]]; then
+      local ERROR_MSG="The source version ${PREVIOUS_BUILD} is not available in ${ARTIFACTORY_LOCATION}.\n Exiting.\n"
+      echo -e "${ERROR_MSG}"
+      echo -e "${ERROR_MSG}" | mutt -e "set content_type=text/html" -s "${SUBJECT_PREFIX} JSON comparison report ${PREVIOUS_BUILD} - ${LATEST_BUILD}" -- "${COMM_LOC}"
+      exit -1
+    else
+      echo -e "\tThe source version ${PREVIOUS_BUILD} is not available in Primary Artifactory location : ${PRIMARY_ARTIFACTORY_LOCATION}.\n\tTrying with secondary location provided [${SECONDARY_ARTIFACTORY_LOCATION}]."    
+      ARTIFACTORY_LOCATION=${SECONDARY_ARTIFACTORY_LOCATION}
+      SECONDARY_ARTIFACTORY_LOCATION=""
+      checkForSourceArchive
+    fi
+  else
+    echo -e "Source build [${PREVIOUS_BUILD}] found at ${ARTIFACTORY_LOCATION}."
+  fi
+}
+
+main(){
+  declare -a FOLDERS=("resources" "resource-types" "schemas" "tenantschemas")
+  declare -a CONTEXTS=("admin" "ca" "job")
+
+  checkForExistingExecution
+  validateConfigJson
+  
+  LAST_MODIFIED_DATE=`cat ${CONF_FILE} | python -c "import sys,json;jsonObj=json.load(sys.stdin);print jsonObj['diff']['lastUpdated'];"`
+  fetchSourceBuildNumber
+  getBuildNumber
+  checkForSourceArchive
+  
+# -----------------------------------------------------------
+# exit
+#---------------------------------------------------------
+  compareBuilds 
+  generateReport
+  updateConfigJSON
+  sendReport
+  cleanup
+}
+
+CONF_FILE=${1}
+main
+
+# Do not change following line as it is there to enforce script specific configurations in Vim
+# vim: ts=2:expandtab
